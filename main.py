@@ -5,7 +5,7 @@ import sys
 import re
 import time
 import shutil
-from pyrogram.errors import FloodWait, Forbidden, RPCError, PeerIdInvalid, BadRequest, MessageNotModified
+from pyrogram.errors import FloodWait, Forbidden, RPCError, PeerIdInvalid, BadRequest, MessageNotModified, ChannelInvalid, ChannelPrivate
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
 
@@ -355,12 +355,12 @@ async def manual_copy(client, message, dest_id):
     try:
         print(f"📥 Downloading Protected File: {message.id}...")
         path = await message.download()
-        await asyncio.sleep(3) # Requirement: 3s delay after media download
+        await asyncio.sleep(3) 
         
         if message.video and message.video.thumbs:
             print("📥 Downloading Thumbnail...")
             thumb_path = await client.download_media(message.video.thumbs[0].file_id)
-            await asyncio.sleep(3) # Requirement: 3s delay after thumbnail download
+            await asyncio.sleep(3) 
 
         print(f"📤 Uploading Protected File: {message.id}...")
         cap = message.caption or ""
@@ -387,7 +387,7 @@ async def manual_copy(client, message, dest_id):
         elif message.document: 
             await client.send_document(dest_id, path, caption=cap)
         
-        await asyncio.sleep(3) # Requirement: 3s delay after upload
+        await asyncio.sleep(3) 
         
         if path and os.path.exists(path): os.remove(path)
         if thumb_path and os.path.exists(thumb_path): os.remove(thumb_path)
@@ -417,12 +417,31 @@ async def run_copy_process(source_input, status_msg, start_mode="continue", cust
 
     try:
         raw_source = get_source_id(source_input)
-        try: chat = await user_app.get_chat(raw_source); source_id = chat.id
-        except: await status_msg.edit_text("❌ সোর্স এরর!", reply_markup=main_menu()); return
+        source_id = None
+        
+        # --- SAFE SOURCE RESOLUTION ---
+        try: 
+            chat = await user_app.get_chat(raw_source)
+            source_id = chat.id
+            print(f"✅ Source Found: {source_id} ({chat.title})")
+        except (PeerIdInvalid, ValueError, ChannelInvalid, ChannelPrivate):
+            await status_msg.edit_text(
+                f"❌ **চ্যানেল পাওয়া যাচ্ছে না!**\n\nযে আইডি দিয়েছেন (`{raw_source}`) সেটি ভুল অথবা ইউজারবট ওই চ্যানেলে নেই।\n\n**সমাধান:**\n১. ইউজারবট দিয়ে ওই চ্যানেলে জয়েন করুন।\n২. অথবা কোনো মেসেজ ওই চ্যানেল থেকে 'Saved Messages'-এ ফরোয়ার্ড করুন।",
+                reply_markup=main_menu()
+            )
+            is_copying = False
+            return
+        except Exception as e:
+            await status_msg.edit_text(f"❌ সোর্স এরর: {e}", reply_markup=main_menu())
+            is_copying = False
+            return
+        # ------------------------------
 
+        # --- SAFE CONFIG RESOLUTION ---
         for ch_id in config.values():
             try: await user_app.get_chat(ch_id)
-            except: pass
+            except: pass # Just try to cache, ignore if fails for now
+        # ------------------------------
 
         if start_mode == "reset":
             update_last_msg(source_id, 0)
@@ -437,15 +456,19 @@ async def run_copy_process(source_input, status_msg, start_mode="continue", cust
             print(f"▶️ Continuing from {last_id} for {source_id}")
 
         max_id = 0
-        async for m in user_app.get_chat_history(source_id, limit=1): max_id = m.id
+        try:
+            async for m in user_app.get_chat_history(source_id, limit=1): max_id = m.id
+        except Exception as e:
+            await status_msg.edit_text(f"❌ হিস্টোরি রিড এরর: {e} (Bot joined?)")
+            return
 
         await status_msg.edit_text(f"🚀 **Copy Started**\n📌 Source: `{source_id}`\n▶️ Start: `{last_id + 1}`\n⏳ Target: `{max_id}`")
         print(f"🚀 Starting Task! Source: {source_id} | Start: {last_id} | Target: {max_id}")
 
         stats = {'copied': 0, 'skipped': 0, 'links': 0}
         curr = last_id + 1
-        BATCH = 20  # Requirement: Read 20 messages at a time
-        processed_count = 0 # Counter for 150 messages long break
+        BATCH = 20  
+        processed_count = 0 
         
         while curr <= max_id:
             if stop_signal: 
@@ -461,7 +484,7 @@ async def run_copy_process(source_input, status_msg, start_mode="continue", cust
                 msgs = await user_app.get_messages(source_id, ids)
                 if not isinstance(msgs, list): msgs = [msgs]
                 
-                await asyncio.sleep(5) # Requirement: 5s delay after reading messages
+                await asyncio.sleep(5) 
 
                 for msg in msgs:
                     if stop_signal: break
@@ -503,13 +526,12 @@ async def run_copy_process(source_input, status_msg, start_mode="continue", cust
                                 is_success = True
                                 stats['copied'] += 1
                                 print(f"✅ Copied {msg.id} Success!")
-                                await asyncio.sleep(5) # Requirement: 5s delay after non-protected copy
+                                await asyncio.sleep(5) 
                             
                             except FloodWait as e:
-                                # Requirement: Stop on FloodWait, save progress to continue later
                                 print(f"⚠️ FloodWait (Copy): {e.value}s. STOPPING TASK.")
                                 await status_msg.edit_text(f"🛑 **FloodWait Detected!**\n⏳ Wait: {e.value}s\n⚠️ Task Stopped safely. Resume later from Menu.")
-                                update_last_msg(source_id, msg.id - 1) # Save previous ID to retry this one later
+                                update_last_msg(source_id, msg.id - 1) 
                                 stop_signal = True
                                 break 
 
@@ -518,7 +540,6 @@ async def run_copy_process(source_input, status_msg, start_mode="continue", cust
                                 if await manual_copy(user_app, msg, dest_id): 
                                     is_success = True
                                     stats['copied'] += 1
-                                    # Delays are handled inside manual_copy now
                             
                             except Exception as e: print(f"❌ Copy Error: {e}")
                             
@@ -526,7 +547,6 @@ async def run_copy_process(source_input, status_msg, start_mode="continue", cust
                                 save_media_id(uid)
                                 processed_count += 1
 
-                    # UI Update Logic
                     if (stats['copied'] + stats['skipped']) % 5 == 0:
                         try:
                             bar = create_progress_bar(msg.id, max_id)
@@ -534,15 +554,13 @@ async def run_copy_process(source_input, status_msg, start_mode="continue", cust
                             await status_msg.edit_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Stop", callback_data="stop_copy")]]))
                         except: pass
                     
-                    # Requirement: 5 min break after every 150 messages
                     if processed_count > 0 and processed_count % 150 == 0:
                         print("😴 Taking a 5-minute break...")
                         await status_msg.edit_text(f"😴 **Resting...**\n150 messages copied.\nSleeping for 5 minutes.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Stop", callback_data="stop_copy")]]))
                         await asyncio.sleep(300)
-                        processed_count = 0 # Reset counter or keep counting (user said "each 150 msg", implied recurring)
+                        processed_count = 0 
             
             except FloodWait as e:
-                # Requirement: Stop on FloodWait during Read
                 print(f"⚠️ FloodWait (Read): {e.value}s. STOPPING TASK.")
                 await status_msg.edit_text(f"🛑 **FloodWait Detected!**\n⏳ Wait: {e.value}s\n⚠️ Task Stopped safely. Resume later.")
                 stop_signal = True
