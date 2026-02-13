@@ -10,7 +10,7 @@ from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
 
 # -------------------------------------------
-# CONFIGURATION
+# CONFIGURATION & DELAY SETTINGS
 # -------------------------------------------
 API_ID = 38361726
 API_HASH = "d5e41c77e0f53e73aa6ba0c5e4890b01"
@@ -19,6 +19,16 @@ USER_SESSION_STRING = "BQJJWn4AkLEQahBkALf26KkBsGRvUf4oGBoYwndg7KOXYjNAe-Yj9jzUZ
 
 MAX_FILE_SIZE = 30 * 1024 * 1024  # 30 MB Limit 
 DB_FILE = os.path.abspath("bot_data.db")
+
+# 🔥 কাস্টম টাইমিং সেটিংস
+BATCH_SIZE = 20          
+BATCH_READ_DELAY = 5     
+NORMAL_COPY_DELAY = 5    
+PROTECTED_DL_DELAY = 3   
+PROTECTED_THUMB_DELAY = 3 
+PROTECTED_UP_DELAY = 3   
+LONG_BREAK_COUNT = 150   
+LONG_BREAK_TIME = 300    
 
 # -------------------------------------------
 # DATABASE
@@ -276,42 +286,40 @@ async def callback_handler(client, query: CallbackQuery):
     except Exception as e:
         print(f"❌ Callback Error: {e}")
 
-# 🔥 পাওয়ারফুল ডাটাবেস রিস্টোর ফাংশন
+# 🔥 পাওয়ারফুল ডাটাবেস রিস্টোর ফাংশন
 @bot_app.on_message(filters.document & filters.private)
 async def db_restore(client, message: Message):
     if user_states.get(message.from_user.id) == "wait_db_file" and message.document.file_name.endswith(".db"):
         status = await message.reply("⏳ **ফাইল প্রসেসিং হচ্ছে...**")
         try:
-            # ১. পুরানো সব ডাটা ক্লিন করা (DB + WAL + SHM)
             for ext in ['', '-wal', '-shm']:
                 f_path = DB_FILE + ext
                 if os.path.exists(f_path):
-                    try:
-                        os.remove(f_path)
-                        print(f"🗑️ Deleted old file: {f_path}")
-                    except Exception as e:
-                        print(f"⚠️ Could not delete {f_path}: {e}")
+                    try: os.remove(f_path)
+                    except: pass
             
-            # ২. নতুন ফাইল ডাউনলোড
             print("📥 Downloading new DB...")
             await message.download(file_name=DB_FILE)
             
-            # ৩. সাইজ চেক করা (ভেরিফিকেশন)
             if os.path.exists(DB_FILE):
                 new_size = os.path.getsize(DB_FILE)
                 print(f"✅ New DB Size: {new_size} bytes")
                 
                 del user_states[message.from_user.id]
-                await status.edit_text(f"✅ **রিস্টোর সফল!**\n📦 সাইজ: `{new_size / 1024:.2f} KB`\n🔄 ২ সেকেন্ডের মধ্যে রিস্টার্ট হবে...")
+                await status.edit_text(f"✅ **রিস্টোর সফল!**\n📦 সাইজ: `{new_size / 1024:.2f} KB`\n🔄 ৩ সেকেন্ডের মধ্যে রিস্টার্ট হবে...")
                 
-                # ৪. সব সেভ হওয়ার জন্য অপেক্ষা
-                await asyncio.sleep(2)
+                await asyncio.sleep(3)
                 
-                # ৫. ফোর্স রিস্টার্ট
+                print("🔄 Stopping clients before restart...")
+                try:
+                    if user_app.is_connected: await user_app.stop()
+                    if bot_app.is_connected: await bot_app.stop()
+                except: pass
+
                 print("🔄 RESTARTING PROCESS NOW...")
                 os.execl(sys.executable, sys.executable, *sys.argv)
             else:
-                await status.edit_text("❌ ডাউনলোড ব্যর্থ হয়েছে!")
+                await status.edit_text("❌ ডাউনলোড ব্যর্থ হয়েছে!")
             
         except Exception as e:
             await status.edit_text(f"❌ মারাত্মক এরর: {e}")
@@ -326,14 +334,14 @@ async def input_handler(client, message: Message):
     if state == "wait_manual_val":
         try:
             update_last_msg(temp_data[user_id], int(message.text))
-            await message.reply("✅ আপডেট হয়েছে!", reply_markup=main_menu())
+            await message.reply("✅ আপডেট হয়েছে!", reply_markup=main_menu())
             del user_states[user_id]
         except: await message.reply("❌ সংখ্যা দিন।", reply_markup=cancel_btn())
 
     elif state.startswith("wait_id_"):
         try:
             set_config(state.split("_")[2], int(message.text))
-            await message.reply("✅ সেভ হয়েছে!", reply_markup=setup_menu())
+            await message.reply("✅ সেভ হয়েছে!", reply_markup=setup_menu())
             del user_states[user_id]
         except: await message.reply("❌ ভুল আইডি।", reply_markup=cancel_btn())
 
@@ -357,7 +365,7 @@ async def input_handler(client, message: Message):
             status = await message.reply(f"🚀 **Custom Start: {custom_id}**...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Stop", callback_data="stop_copy")]]))
             asyncio.create_task(run_copy_process(source_input, status, start_mode="custom", custom_id=custom_id))
         except ValueError:
-            await message.reply("❌ দয়া করে ইংরেজি সংখ্যা দিন।", reply_markup=cancel_btn())
+            await message.reply("❌ দয়া করে ইংরেজি সংখ্যা দিন।", reply_markup=cancel_btn())
 
 # -------------------------------------------
 # LOGIC
@@ -369,9 +377,16 @@ async def manual_copy(client, message, dest_id):
         print(f"📥 Downloading Protected File: {message.id}...")
         path = await message.download()
         
+        await asyncio.sleep(PROTECTED_DL_DELAY)
+
+        if not path or not os.path.exists(path) or os.path.getsize(path) == 0:
+            print("❌ Download Failed: 0 Byte File")
+            return False
+
         if message.video and message.video.thumbs:
             print("📥 Downloading Thumbnail...")
             thumb_path = await client.download_media(message.video.thumbs[0].file_id)
+            await asyncio.sleep(PROTECTED_THUMB_DELAY)
 
         print(f"📤 Uploading Protected File: {message.id}...")
         cap = message.caption or ""
@@ -382,27 +397,24 @@ async def manual_copy(client, message, dest_id):
             width = getattr(message.video, 'width', 0)
             height = getattr(message.video, 'height', 0)
             duration = getattr(message.video, 'duration', 0)
-
-            await client.send_video(
-                dest_id, 
-                path, 
-                caption=cap, 
-                supports_streaming=True,
-                width=width,
-                height=height,
-                duration=duration,
-                thumb=thumb_path 
-            )
+            await client.send_video(dest_id, path, caption=cap, supports_streaming=True, width=width, height=height, duration=duration, thumb=thumb_path)
         elif message.audio: 
             await client.send_audio(dest_id, path, caption=cap)
         elif message.document: 
             await client.send_document(dest_id, path, caption=cap)
         
+        print(f"✅ Uploaded {message.id}, Waiting {PROTECTED_UP_DELAY}s...")
+        await asyncio.sleep(PROTECTED_UP_DELAY)
+
         if path and os.path.exists(path): os.remove(path)
         if thumb_path and os.path.exists(thumb_path): os.remove(thumb_path)
 
         print("✅ Manual Copy Success!")
         return True
+    except FloodWait as e:
+        # 🔥 Manual Copy তেও FloodWait হ্যান্ডেলিং
+        print(f"⚠️ Manual Copy FloodWait: {e.value}s. Stopping Task...")
+        raise e  # এররটি উপরে পাঠাবে যাতে মেইন লুপে Pause ট্রিগার হয়
     except Exception as e:
         print(f"❌ Manual Copy Failed: {e}")
         if path and os.path.exists(path): os.remove(path)
@@ -436,57 +448,45 @@ async def run_copy_process(source_input, status_msg, start_mode="continue", cust
         if start_mode == "reset":
             update_last_msg(source_id, 0)
             last_id = 0
-            print(f"🔄 Progress Reset for {source_id}")
         elif start_mode == "custom":
             update_last_msg(source_id, custom_id - 1)
             last_id = custom_id - 1
-            print(f"🔢 Custom Start set to {custom_id} for {source_id}")
         else: 
             last_id = get_last_msg(source_id)
-            print(f"▶️ Continuing from {last_id} for {source_id}")
 
         max_id = 0
         async for m in user_app.get_chat_history(source_id, limit=1): max_id = m.id
 
-        await status_msg.edit_text(f"🚀 **Copy Started**\n📌 Source: `{source_id}`\n▶️ Start: `{last_id + 1}`\n⏳ Target: `{max_id}`")
-        print(f"🚀 Starting Task! Source: {source_id} | Start: {last_id} | Target: {max_id}")
+        await status_msg.edit_text(f"🚀 **Copy Started (Auto Pause Mode)**\n📌 Source: `{source_id}`\n▶️ Start: `{last_id + 1}`\n⏳ Target: `{max_id}`")
 
         stats = {'copied': 0, 'skipped': 0, 'links': 0}
         curr = last_id + 1
-        BATCH = 10 
         
         while curr <= max_id:
-            if stop_signal: 
-                print("🛑 Stopping Loop...")
-                break
-            
-            end = min(curr + BATCH, max_id + 1)
+            if stop_signal: break
+            end = min(curr + BATCH_SIZE, max_id + 1)
             ids = list(range(curr, end))
             if not ids: break
 
             try:
-                print(f"😴 Resting 2s before reading batch {curr}-{end}...")
-                await asyncio.sleep(2) 
+                print(f"😴 Resting {BATCH_READ_DELAY}s before reading batch {curr}-{end}...")
+                await asyncio.sleep(BATCH_READ_DELAY)
                 
-                print(f"📥 Reading {len(ids)} messages...")
                 msgs = await user_app.get_messages(source_id, ids)
                 if not isinstance(msgs, list): msgs = [msgs]
                 
                 for msg in msgs:
                     if stop_signal: break
                     if not msg or msg.empty: 
-                        print(f"⏩ Empty Message {curr} skipped.")
                         update_last_msg(source_id, curr); curr += 1; continue
                     
                     update_last_msg(source_id, msg.id); curr = msg.id + 1
                     
-                    if not msg.media: 
-                        print(f"⏩ No Media in {msg.id}, skipped.")
-                        continue
+                    if not msg.media: continue
 
                     uid, size = get_file_info(msg)
                     if uid and is_duplicate(uid): 
-                        print(f"⏩ Duplicate Found: {msg.id}, skipped.")
+                        print(f"⏩ Duplicate: {msg.id}")
                         stats['skipped'] += 1; continue
 
                     dest_id = None
@@ -496,82 +496,77 @@ async def run_copy_process(source_input, status_msg, start_mode="continue", cust
                     elif msg.document: dest_id = config.get('doc')
 
                     if dest_id:
+                        if stats['copied'] > 0 and stats['copied'] % LONG_BREAK_COUNT == 0:
+                            print(f"☕ Long Break: {LONG_BREAK_TIME}s...")
+                            await status_msg.edit_text(f"😴 **Long Break:** 5 Minutes...\n✅ Total Copied: {stats['copied']}")
+                            await asyncio.sleep(LONG_BREAK_TIME)
+                            await status_msg.edit_text(f"🚀 **Resuming...**")
+
                         if size > MAX_FILE_SIZE:
                             try:
                                 link = msg.link or f"t.me/c/{str(source_id)[4:]}/{msg.id}"
                                 await bot_app.send_message(dest_id, f"⚠️ **Large File**\n🔗 {link}")
                                 if uid: save_media_id(uid)
                                 stats['links'] += 1
-                                print(f"🔗 Large Link Sent for {msg.id}")
                             except: pass
                         else:
                             is_success = False
                             try:
-                                print(f"📤 Copying Msg {msg.id}...")
                                 await msg.copy(dest_id)
                                 is_success = True
                                 stats['copied'] += 1
-                                print(f"✅ Copied {msg.id} Success!")
-                                print("⏳ Waiting 3s...")
-                                await asyncio.sleep(3) 
+                                print(f"✅ Copied {msg.id}")
+                                await asyncio.sleep(NORMAL_COPY_DELAY)
                             except FloodWait as e:
-                                wait_time = e.value + 10
-                                print(f"⚠️ FloodWait (Copy): Sleeping {wait_time}s...")
-                                await status_msg.edit_text(f"⏳ **FloodWait:** {wait_time}s...")
-                                await asyncio.sleep(wait_time)
-                                try:
-                                    await msg.copy(dest_id)
-                                    is_success = True
-                                    stats['copied'] += 1
-                                    print(f"✅ Retry Copied {msg.id} Success!")
-                                    await asyncio.sleep(3)
-                                except: pass
+                                # 🔥 ১. FloodWait ডিটেক্ট হলে কাজ Pause করা
+                                print(f"⚠️ FloodWait Detected: {e.value}s")
+                                await status_msg.edit_text(
+                                    f"⚠️ **FloodWait Detected!**\n⏳ Wait: `{e.value}` seconds.\n🛑 **কাজ থামানো হয়েছে।**\nনিচের বাটনে চাপ দিয়ে আবার শুরু করুন।",
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("▶️ Continue", callback_data="mode_continue")]])
+                                )
+                                stop_signal = True # লুপ বন্ধ করে দিবে
+                                return # ফাংশন থেকে বের হয়ে যাবে
                             except (Forbidden, PeerIdInvalid, BadRequest):
-                                print(f"⚠️ Copy Restricted/Failed, Trying Manual...")
                                 if await manual_copy(user_app, msg, dest_id): 
                                     is_success = True
                                     stats['copied'] += 1
-                                    await asyncio.sleep(3) 
-                            except Exception as e: print(f"❌ Copy Error: {e}")
+                            except Exception as e: print(f"❌ Copy Error {msg.id}: {e}")
                             
-                            if uid and is_success: 
-                                save_media_id(uid)
+                            if uid and is_success: save_media_id(uid)
 
-                    if (stats['copied'] + stats['skipped']) % 3 == 0:
+                    if (stats['copied'] + stats['skipped']) % 5 == 0:
                         try:
                             bar = create_progress_bar(msg.id, max_id)
-                            txt = f"🛡️ **Processing...**\n{bar}\n🆔 Process: `{msg.id}`\n🎯 Target: `{max_id}`\n✅ Copied: **{stats['copied']}**\n⏭️ Skipped: **{stats['skipped']}**"
+                            txt = f"🛡️ **Timing Mode...**\n{bar}\n🆔 Process: `{msg.id}`\n🎯 Target: `{max_id}`\n✅ Copied: **{stats['copied']}**\n⏭️ Skipped: **{stats['skipped']}**"
                             await status_msg.edit_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Stop", callback_data="stop_copy")]]))
                         except: pass
-                    
+            
             except FloodWait as e:
-                print(f"⚠️ FloodWait (Read): Sleeping {e.value}s...")
-                await status_msg.edit_text(f"😴 **Limit:** {e.value}s...")
-                await asyncio.sleep(e.value)
+                # 🔥 ২. ব্যাচ রিডিং এর সময় FloodWait ডিটেক্ট হলে
+                print(f"⚠️ Batch Read FloodWait: {e.value}s")
+                await status_msg.edit_text(
+                    f"⚠️ **FloodWait Reading!**\n⏳ Wait: `{e.value}` seconds.\n🛑 **কাজ থামানো হয়েছে।**\nনিচের বাটনে চাপ দিয়ে আবার শুরু করুন।",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("▶️ Continue", callback_data="mode_continue")]])
+                )
+                stop_signal = True
+                return
             except Exception as e: 
                 print(f"❌ Batch Error: {e}"); await asyncio.sleep(5)
             
             curr = end
 
-        await status_msg.edit_text(f"✅ **শেষ!**\nমোট কপি: {stats['copied']}", reply_markup=main_menu())
-        print("✅ Task Finished!")
+        if not stop_signal:
+            await status_msg.edit_text(f"✅ **শেষ!**\nমোট কপি: {stats['copied']}", reply_markup=main_menu())
     except Exception as e: 
         await status_msg.edit_text(f"❌ Error: {e}")
         print(f"❌ Critical Error: {e}")
     finally: is_copying = False
 
-# -------------------------------------------
-# MAIN
-# -------------------------------------------
 async def main():
     print("🚀 Services Starting...")
     await user_app.start()
     await bot_app.start()
-    try:
-        print("⏳ Loading Dialogs...")
-        async for dialog in user_app.get_dialogs(): pass 
-    except: pass
-    print("✅ Bot Ready! Waiting for commands...")
+    print("✅ Bot Ready!")
     await idle()
     await user_app.stop()
     await bot_app.stop()
