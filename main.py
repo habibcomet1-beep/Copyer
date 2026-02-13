@@ -412,9 +412,8 @@ async def manual_copy(client, message, dest_id):
         print("✅ Manual Copy Success!")
         return True
     except FloodWait as e:
-        # 🔥 Manual Copy তেও FloodWait হ্যান্ডেলিং
         print(f"⚠️ Manual Copy FloodWait: {e.value}s. Stopping Task...")
-        raise e  # এররটি উপরে পাঠাবে যাতে মেইন লুপে Pause ট্রিগার হয়
+        raise e  
     except Exception as e:
         print(f"❌ Manual Copy Failed: {e}")
         if path and os.path.exists(path): os.remove(path)
@@ -436,10 +435,26 @@ async def run_copy_process(source_input, status_msg, start_mode="continue", cust
     
     if not config: await status_msg.edit_text("❌ সেটআপ করা নেই!", reply_markup=main_menu()); is_copying = False; return
 
+    # 🔥 FIX: Source ID Resolution
     try:
         raw_source = get_source_id(source_input)
-        try: chat = await user_app.get_chat(raw_source); source_id = chat.id
-        except: await status_msg.edit_text("❌ সোর্স এরর!", reply_markup=main_menu()); return
+        try: 
+            chat = await user_app.get_chat(raw_source)
+            source_id = chat.id
+        except (KeyError, ValueError, BadRequest):
+            # 🔥 যদি ডাইরেক্ট না পায়, তাহলে ডায়ালগ স্ক্যান করবে (Auto Fix)
+            print(f"⚠️ ID {raw_source} not found in cache. Scanning dialogs...")
+            found = False
+            async for dialog in user_app.get_dialogs():
+                if dialog.chat.id == raw_source or str(dialog.chat.id) == str(raw_source):
+                    source_id = dialog.chat.id
+                    found = True
+                    print(f"✅ Found chat in dialogs: {dialog.chat.title} ({source_id})")
+                    break
+            if not found:
+                await status_msg.edit_text("❌ সোর্স চ্যানেলটি খুঁজে পাওয়া যাচ্ছে না।\nঅনুগ্রহ করে নিশ্চিত করুন যে আপনার Userbot ওই চ্যানেলে জয়েন আছে এবং চ্যানেলের কোনো মেসেজ রিসেন্টলি ভিজিট করেছেন।", reply_markup=main_menu())
+                is_copying = False
+                return
 
         for ch_id in config.values():
             try: await user_app.get_chat(ch_id)
@@ -457,7 +472,7 @@ async def run_copy_process(source_input, status_msg, start_mode="continue", cust
         max_id = 0
         async for m in user_app.get_chat_history(source_id, limit=1): max_id = m.id
 
-        await status_msg.edit_text(f"🚀 **Copy Started (Auto Pause Mode)**\n📌 Source: `{source_id}`\n▶️ Start: `{last_id + 1}`\n⏳ Target: `{max_id}`")
+        await status_msg.edit_text(f"🚀 **Copy Started**\n📌 Source: `{source_id}`\n▶️ Start: `{last_id + 1}`\n⏳ Target: `{max_id}`")
 
         stats = {'copied': 0, 'skipped': 0, 'links': 0}
         curr = last_id + 1
@@ -518,14 +533,13 @@ async def run_copy_process(source_input, status_msg, start_mode="continue", cust
                                 print(f"✅ Copied {msg.id}")
                                 await asyncio.sleep(NORMAL_COPY_DELAY)
                             except FloodWait as e:
-                                # 🔥 ১. FloodWait ডিটেক্ট হলে কাজ Pause করা
                                 print(f"⚠️ FloodWait Detected: {e.value}s")
                                 await status_msg.edit_text(
                                     f"⚠️ **FloodWait Detected!**\n⏳ Wait: `{e.value}` seconds.\n🛑 **কাজ থামানো হয়েছে।**\nনিচের বাটনে চাপ দিয়ে আবার শুরু করুন।",
                                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("▶️ Continue", callback_data="mode_continue")]])
                                 )
-                                stop_signal = True # লুপ বন্ধ করে দিবে
-                                return # ফাংশন থেকে বের হয়ে যাবে
+                                stop_signal = True 
+                                return 
                             except (Forbidden, PeerIdInvalid, BadRequest):
                                 if await manual_copy(user_app, msg, dest_id): 
                                     is_success = True
@@ -537,12 +551,11 @@ async def run_copy_process(source_input, status_msg, start_mode="continue", cust
                     if (stats['copied'] + stats['skipped']) % 5 == 0:
                         try:
                             bar = create_progress_bar(msg.id, max_id)
-                            txt = f"🛡️ **Timing Mode...**\n{bar}\n🆔 Process: `{msg.id}`\n🎯 Target: `{max_id}`\n✅ Copied: **{stats['copied']}**\n⏭️ Skipped: **{stats['skipped']}**"
+                            txt = f"🛡️ **Working...**\n{bar}\n🆔 Process: `{msg.id}`\n🎯 Target: `{max_id}`\n✅ Copied: **{stats['copied']}**\n⏭️ Skipped: **{stats['skipped']}**"
                             await status_msg.edit_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Stop", callback_data="stop_copy")]]))
                         except: pass
             
             except FloodWait as e:
-                # 🔥 ২. ব্যাচ রিডিং এর সময় FloodWait ডিটেক্ট হলে
                 print(f"⚠️ Batch Read FloodWait: {e.value}s")
                 await status_msg.edit_text(
                     f"⚠️ **FloodWait Reading!**\n⏳ Wait: `{e.value}` seconds.\n🛑 **কাজ থামানো হয়েছে।**\nনিচের বাটনে চাপ দিয়ে আবার শুরু করুন।",
