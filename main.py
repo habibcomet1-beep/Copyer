@@ -4,7 +4,8 @@ import os
 import sys
 import re
 import time
-from pyrogram.errors import FloodWait, Forbidden, RPCError, PeerIdInvalid, BadRequest
+import shutil
+from pyrogram.errors import FloodWait, Forbidden, RPCError, PeerIdInvalid, BadRequest, MessageNotModified
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
 
@@ -16,10 +17,7 @@ API_HASH = "d5e41c77e0f53e73aa6ba0c5e4890b01"
 BOT_TOKEN = "8564823023:AAF8hdcufaCOilggs9Ura0QKZOat5UU_m0c"
 USER_SESSION_STRING = "BQJJWn4AkLEQahBkALf26KkBsGRvUf4oGBoYwndg7KOXYjNAe-Yj9jzUZYH39o_ZwADvgSFVvKPFay_n8Msd_Ydn2zb1SXnzp_k8_xSCiFaO8Ljq44ZXOZ4t2cP_9unJkatQjookpKz4LHNdDREoB2z-o1IgOgotTU9EtWuuN-bzPF-0qWnLTf-pSdYnZPZ8PCRRKaD7PT0wlPI4fOzfeP6DRkvX0JIccjsoGBuwy9kHONwlzTf7YD9TMtEywjKgrPrmwoGBhz10JlToBrFYp6DeueQ_XoV8xevefWHrOHbRvMf1YX_mGtak_VNFYmwQbHl0H6cEzGgiuRiyqjJtf-d7_e0dpAAAAAGNRPFXAA"
 
-# 🔥 আপডেট: লিমিট ৩০ এমবি
 MAX_FILE_SIZE = 30 * 1024 * 1024  # 30 MB Limit 
-
-# 🔥 ফিক্স: অ্যাবসলিউট পাথ ব্যবহার করা হয়েছে যাতে ফাইল হারানো না যায়
 DB_FILE = os.path.abspath("bot_data.db")
 
 # -------------------------------------------
@@ -94,10 +92,8 @@ def save_media_id(unique_id):
     conn.commit()
     conn.close()
 
-# ডাটাবেস ইনিশিয়ালাইজেশন
 if not os.path.exists(DB_FILE):
-    print("⚠️ Database not found, creating new one...")
-init_db()
+    init_db()
 
 # -------------------------------------------
 # CLIENT SETUP
@@ -179,121 +175,147 @@ async def callback_handler(client, query: CallbackQuery):
     user_id = query.from_user.id
     msg = query.message
 
-    if data == "back_main":
-        if user_id in user_states: del user_states[user_id]
-        await msg.edit_text("**🤖 মেইন মেনু:**", reply_markup=main_menu())
-    
-    elif data == "cancel_action":
-        if user_id in user_states: del user_states[user_id]
-        await msg.edit_text("❌ অপারেশন বাতিল।", reply_markup=main_menu())
+    try:
+        if data == "back_main":
+            if user_id in user_states: del user_states[user_id]
+            await msg.edit_text("**🤖 মেইন মেনু:**", reply_markup=main_menu())
+        
+        elif data == "cancel_action":
+            if user_id in user_states: del user_states[user_id]
+            await msg.edit_text("❌ অপারেশন বাতিল।", reply_markup=main_menu())
 
-    elif data == "db_menu":
-        await msg.edit_text("🗄️ **ডাটাবেস অপশন:**", reply_markup=db_menu())
+        elif data == "db_menu":
+            await msg.edit_text("🗄️ **ডাটাবেস অপশন:**", reply_markup=db_menu())
 
-    elif data == "backup_db":
-        if os.path.exists(DB_FILE): await msg.reply_document(DB_FILE, caption="📦 ব্যাকআপ ফাইল।")
-        else: await query.answer("ডাটাবেস খালি!", show_alert=True)
+        elif data == "backup_db":
+            if os.path.exists(DB_FILE): await msg.reply_document(DB_FILE, caption="📦 ব্যাকআপ ফাইল।")
+            else: await query.answer("ডাটাবেস খালি!", show_alert=True)
 
-    elif data == "restore_db":
-        if is_copying: return await query.answer("কাজ চলাকালীন সম্ভব না!", show_alert=True)
-        user_states[user_id] = "wait_db_file"
-        await msg.edit_text("📥 `.db` ফাইলটি পাঠান:\n⚠️ **সতর্কতা:** রিস্টোর করার পর বট রিস্টার্ট হবে।", reply_markup=cancel_btn())
+        elif data == "restore_db":
+            if is_copying: return await query.answer("কাজ চলাকালীন সম্ভব না!", show_alert=True)
+            user_states[user_id] = "wait_db_file"
+            try:
+                await msg.edit_text("📥 `.db` ফাইলটি পাঠান:\n⚠️ **সতর্কতা:** রিস্টোর করার পর বট রিস্টার্ট হবে।", reply_markup=cancel_btn())
+            except MessageNotModified: pass 
 
-    elif data == "setup_menu":
-        await msg.edit_text("⚙️ **মিডিয়া সেটআপ:**", reply_markup=setup_menu())
-    
-    elif data.startswith("set_"):
-        m_type = data.split("_")[1]
-        user_states[user_id] = f"wait_id_{m_type}"
-        await msg.edit_text(f"👇 **{m_type.upper()}** আইডি পাঠান:", reply_markup=cancel_btn())
+        elif data == "setup_menu":
+            await msg.edit_text("⚙️ **মিডিয়া সেটআপ:**", reply_markup=setup_menu())
+        
+        elif data.startswith("set_"):
+            m_type = data.split("_")[1]
+            user_states[user_id] = f"wait_id_{m_type}"
+            await msg.edit_text(f"👇 **{m_type.upper()}** আইডি পাঠান:", reply_markup=cancel_btn())
 
-    elif data == "check_settings":
-        conf = get_config()
-        text = "**📊 সেটিংস:**\n"
-        for k, v in conf.items(): text += f"- {k}: `{v}`\n"
-        await msg.edit_text(text if conf else "খালি!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_main")]]))
+        elif data == "check_settings":
+            conf = get_config()
+            text = "**📊 সেটিংস:**\n"
+            for k, v in conf.items(): text += f"- {k}: `{v}`\n"
+            await msg.edit_text(text if conf else "খালি!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_main")]]))
 
-    elif data == "manage_progress":
-        rows = get_all_progress()
-        if not rows: return await query.answer("ডাটা নেই!", show_alert=True)
-        btns = [[InlineKeyboardButton(f"ID: {r[0]} | Last: {r[1]}", callback_data=f"edit_prog_{r[0]}")] for r in rows]
-        btns.append([InlineKeyboardButton("🔙 Back", callback_data="back_main")])
-        await msg.edit_text("📝 **এডিট করুন:**", reply_markup=InlineKeyboardMarkup(btns))
+        elif data == "manage_progress":
+            rows = get_all_progress()
+            if not rows: return await query.answer("ডাটা নেই!", show_alert=True)
+            btns = [[InlineKeyboardButton(f"ID: {r[0]} | Last: {r[1]}", callback_data=f"edit_prog_{r[0]}")] for r in rows]
+            btns.append([InlineKeyboardButton("🔙 Back", callback_data="back_main")])
+            await msg.edit_text("📝 **এডিট করুন:**", reply_markup=InlineKeyboardMarkup(btns))
 
-    elif data.startswith("edit_prog_"):
-        src_id = int(data.split("_")[2])
-        temp_data[user_id] = src_id 
-        btns = [
-            [InlineKeyboardButton("✏️ সেট আইডি", callback_data="set_manual_id")],
-            [InlineKeyboardButton("🔄 রিসেট", callback_data="reset_prog"), InlineKeyboardButton("🗑️ ডিলিট", callback_data="del_prog")],
-            [InlineKeyboardButton("🔙 Back", callback_data="manage_progress")]
-        ]
-        await msg.edit_text(f"📝 Source: `{src_id}`", reply_markup=InlineKeyboardMarkup(btns))
+        elif data.startswith("edit_prog_"):
+            src_id = int(data.split("_")[2])
+            temp_data[user_id] = src_id 
+            btns = [
+                [InlineKeyboardButton("✏️ সেট আইডি", callback_data="set_manual_id")],
+                [InlineKeyboardButton("🔄 রিসেট", callback_data="reset_prog"), InlineKeyboardButton("🗑️ ডিলিট", callback_data="del_prog")],
+                [InlineKeyboardButton("🔙 Back", callback_data="manage_progress")]
+            ]
+            await msg.edit_text(f"📝 Source: `{src_id}`", reply_markup=InlineKeyboardMarkup(btns))
 
-    elif data == "set_manual_id":
-        user_states[user_id] = "wait_manual_val"
-        await msg.edit_text("👇 সংখ্যা পাঠান:", reply_markup=cancel_btn())
+        elif data == "set_manual_id":
+            user_states[user_id] = "wait_manual_val"
+            await msg.edit_text("👇 সংখ্যা পাঠান:", reply_markup=cancel_btn())
 
-    elif data == "reset_prog":
-        if temp_data.get(user_id): update_last_msg(temp_data[user_id], 0); await msg.edit_text("✅ রিসেট!", reply_markup=main_menu())
+        elif data == "reset_prog":
+            if temp_data.get(user_id): update_last_msg(temp_data[user_id], 0); await msg.edit_text("✅ রিসেট!", reply_markup=main_menu())
 
-    elif data == "del_prog":
-        if temp_data.get(user_id): delete_progress(temp_data[user_id]); await msg.edit_text("✅ ডিলিট!", reply_markup=main_menu())
+        elif data == "del_prog":
+            if temp_data.get(user_id): delete_progress(temp_data[user_id]); await msg.edit_text("✅ ডিলিট!", reply_markup=main_menu())
 
-    elif data == "start_copy":
-        if is_copying: return await query.answer("কাজ চলছে!", show_alert=True)
-        user_states[user_id] = "wait_source_id"
-        await msg.edit_text("📥 **সোর্স আইডি/লিংক দিন:**", reply_markup=cancel_btn())
-    
-    elif data == "stop_copy":
-        if is_copying:
-            stop_signal = True
-            print("🛑 Stop Signal Received!")
-            await query.answer("থামানো হচ্ছে...", show_alert=True)
-            await msg.edit_text("🛑 থামানো হচ্ছে...")
-        else: await query.answer("কাজ চলছে না।", show_alert=True)
+        elif data == "start_copy":
+            if is_copying: return await query.answer("কাজ চলছে!", show_alert=True)
+            user_states[user_id] = "wait_source_id"
+            await msg.edit_text("📥 **সোর্স আইডি/লিংক দিন:**", reply_markup=cancel_btn())
+        
+        elif data == "stop_copy":
+            if is_copying:
+                stop_signal = True
+                print("🛑 Stop Signal Received!")
+                await query.answer("থামানো হচ্ছে...", show_alert=True)
+                await msg.edit_text("🛑 থামানো হচ্ছে...")
+            else: await query.answer("কাজ চলছে না।", show_alert=True)
 
-    elif data == "mode_start_over":
-        source_input = temp_data.get(user_id, {}).get('source_input')
-        if not source_input: return await msg.edit_text("❌ সেশন এক্সপায়ার্ড। আবার শুরু করুন।", reply_markup=main_menu())
-        await msg.edit_text("🔄 **রিসেট হচ্ছে...**")
-        status = await msg.reply("🔄 রিসেট করে শুরু হচ্ছে...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Stop", callback_data="stop_copy")]]))
-        del user_states[user_id]
-        asyncio.create_task(run_copy_process(source_input, status, start_mode="reset"))
+        elif data == "mode_start_over":
+            source_input = temp_data.get(user_id, {}).get('source_input')
+            if not source_input: return await msg.edit_text("❌ সেশন এক্সপায়ার্ড। আবার শুরু করুন।", reply_markup=main_menu())
+            await msg.edit_text("🔄 **রিসেট হচ্ছে...**")
+            status = await msg.reply("🔄 রিসেট করে শুরু হচ্ছে...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Stop", callback_data="stop_copy")]]))
+            del user_states[user_id]
+            asyncio.create_task(run_copy_process(source_input, status, start_mode="reset"))
 
-    elif data == "mode_continue":
-        source_input = temp_data.get(user_id, {}).get('source_input')
-        if not source_input: return await msg.edit_text("❌ সেশন এক্সপায়ার্ড।", reply_markup=main_menu())
-        status = await msg.reply("🔄 প্রগ্রেস চেক করা হচ্ছে...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Stop", callback_data="stop_copy")]]))
-        del user_states[user_id]
-        asyncio.create_task(run_copy_process(source_input, status, start_mode="continue"))
+        elif data == "mode_continue":
+            source_input = temp_data.get(user_id, {}).get('source_input')
+            if not source_input: return await msg.edit_text("❌ সেশন এক্সপায়ার্ড।", reply_markup=main_menu())
+            status = await msg.reply("🔄 প্রগ্রেস চেক করা হচ্ছে...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Stop", callback_data="stop_copy")]]))
+            del user_states[user_id]
+            asyncio.create_task(run_copy_process(source_input, status, start_mode="continue"))
 
-    elif data == "mode_custom":
-        user_states[user_id] = "wait_custom_start_num"
-        await msg.edit_text("🔢 **কত নম্বর মেসেজ থেকে শুরু করবেন?** (সংখ্যা লিখুন):", reply_markup=cancel_btn())
+        elif data == "mode_custom":
+            user_states[user_id] = "wait_custom_start_num"
+            await msg.edit_text("🔢 **কত নম্বর মেসেজ থেকে শুরু করবেন?** (সংখ্যা লিখুন):", reply_markup=cancel_btn())
 
-# 🔥 আপডেট করা ডাটাবেস রিস্টোর ফাংশন
+    except MessageNotModified:
+        pass
+    except Exception as e:
+        print(f"❌ Callback Error: {e}")
+
+# 🔥 পাওয়ারফুল ডাটাবেস রিস্টোর ফাংশন
 @bot_app.on_message(filters.document & filters.private)
 async def db_restore(client, message: Message):
     if user_states.get(message.from_user.id) == "wait_db_file" and message.document.file_name.endswith(".db"):
         status = await message.reply("⏳ **ফাইল প্রসেসিং হচ্ছে...**")
         try:
-            # আগে যদি ফাইল থাকে, ডিলিট করা হবে
-            if os.path.exists(DB_FILE):
-                os.remove(DB_FILE)
+            # ১. পুরানো সব ডাটা ক্লিন করা (DB + WAL + SHM)
+            for ext in ['', '-wal', '-shm']:
+                f_path = DB_FILE + ext
+                if os.path.exists(f_path):
+                    try:
+                        os.remove(f_path)
+                        print(f"🗑️ Deleted old file: {f_path}")
+                    except Exception as e:
+                        print(f"⚠️ Could not delete {f_path}: {e}")
             
-            # সঠিক পাথে ফাইল ডাউনলোড
+            # ২. নতুন ফাইল ডাউনলোড
+            print("📥 Downloading new DB...")
             await message.download(file_name=DB_FILE)
             
-            del user_states[message.from_user.id]
-            await status.edit_text("✅ **রিস্টোর সফল!**\n🔄 নতুন ডাটা লোড করতে বট রিস্টার্ট হচ্ছে...")
-            
-            print("🔄 Restarting Bot to apply DB changes...")
-            # 🔥 বট রিস্টার্ট লজিক (যাতে ডাটাবেস নতুন করে কানেক্ট হয়)
-            os.execl(sys.executable, sys.executable, *sys.argv)
+            # ৩. সাইজ চেক করা (ভেরিফিকেশন)
+            if os.path.exists(DB_FILE):
+                new_size = os.path.getsize(DB_FILE)
+                print(f"✅ New DB Size: {new_size} bytes")
+                
+                del user_states[message.from_user.id]
+                await status.edit_text(f"✅ **রিস্টোর সফল!**\n📦 সাইজ: `{new_size / 1024:.2f} KB`\n🔄 ২ সেকেন্ডের মধ্যে রিস্টার্ট হবে...")
+                
+                # ৪. সব সেভ হওয়ার জন্য অপেক্ষা
+                await asyncio.sleep(2)
+                
+                # ৫. ফোর্স রিস্টার্ট
+                print("🔄 RESTARTING PROCESS NOW...")
+                os.execl(sys.executable, sys.executable, *sys.argv)
+            else:
+                await status.edit_text("❌ ডাউনলোড ব্যর্থ হয়েছে!")
             
         except Exception as e:
-            await status.edit_text(f"❌ এরর: {e}")
+            await status.edit_text(f"❌ মারাত্মক এরর: {e}")
+            print(f"❌ Critical Restore Error: {e}")
 
 @bot_app.on_message(filters.text & ~filters.command("start"))
 async def input_handler(client, message: Message):
@@ -483,7 +505,7 @@ async def run_copy_process(source_input, status_msg, start_mode="continue", cust
                                 print(f"🔗 Large Link Sent for {msg.id}")
                             except: pass
                         else:
-                            is_success = False 
+                            is_success = False
                             try:
                                 print(f"📤 Copying Msg {msg.id}...")
                                 await msg.copy(dest_id)
