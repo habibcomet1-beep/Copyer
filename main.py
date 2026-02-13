@@ -554,10 +554,11 @@ async def run_copy_process(source_input, status_msg, start_mode="continue", cust
                             await status_msg.edit_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Stop", callback_data="stop_copy")]]))
                         except: pass
                     
-                    if processed_count > 0 and processed_count % 150 == 0:
-                        print("😴 Taking a 5-minute break...")
-                        await status_msg.edit_text(f"😴 **Resting...**\n150 messages copied.\nSleeping for 5 minutes.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Stop", callback_data="stop_copy")]]))
-                        await asyncio.sleep(300)
+                    # Requirement: 3 min break after every 250 messages
+                    if processed_count > 0 and processed_count % 250 == 0:
+                        print("😴 Taking a 3-minute break...")
+                        await status_msg.edit_text(f"😴 **Resting...**\n250 messages copied.\nSleeping for 3 minutes.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Stop", callback_data="stop_copy")]]))
+                        await asyncio.sleep(180) # 180 seconds = 3 minutes
                         processed_count = 0 
             
             except FloodWait as e:
