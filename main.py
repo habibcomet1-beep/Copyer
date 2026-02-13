@@ -1,6 +1,7 @@
 import asyncio
 import sqlite3
 import os
+import sys
 import re
 import time
 from pyrogram.errors import FloodWait, Forbidden, RPCError, PeerIdInvalid, BadRequest
@@ -15,9 +16,11 @@ API_HASH = "d5e41c77e0f53e73aa6ba0c5e4890b01"
 BOT_TOKEN = "8564823023:AAF8hdcufaCOilggs9Ura0QKZOat5UU_m0c"
 USER_SESSION_STRING = "BQJJWn4AkLEQahBkALf26KkBsGRvUf4oGBoYwndg7KOXYjNAe-Yj9jzUZYH39o_ZwADvgSFVvKPFay_n8Msd_Ydn2zb1SXnzp_k8_xSCiFaO8Ljq44ZXOZ4t2cP_9unJkatQjookpKz4LHNdDREoB2z-o1IgOgotTU9EtWuuN-bzPF-0qWnLTf-pSdYnZPZ8PCRRKaD7PT0wlPI4fOzfeP6DRkvX0JIccjsoGBuwy9kHONwlzTf7YD9TMtEywjKgrPrmwoGBhz10JlToBrFYp6DeueQ_XoV8xevefWHrOHbRvMf1YX_mGtak_VNFYmwQbHl0H6cEzGgiuRiyqjJtf-d7_e0dpAAAAAGNRPFXAA"
 
-# 🔥 আপডেট: লিমিট ৩০ এমবি করা হয়েছে
+# 🔥 আপডেট: লিমিট ৩০ এমবি
 MAX_FILE_SIZE = 30 * 1024 * 1024  # 30 MB Limit 
-DB_FILE = 'bot_data.db'
+
+# 🔥 ফিক্স: অ্যাবসলিউট পাথ ব্যবহার করা হয়েছে যাতে ফাইল হারানো না যায়
+DB_FILE = os.path.abspath("bot_data.db")
 
 # -------------------------------------------
 # DATABASE
@@ -91,6 +94,9 @@ def save_media_id(unique_id):
     conn.commit()
     conn.close()
 
+# ডাটাবেস ইনিশিয়ালাইজেশন
+if not os.path.exists(DB_FILE):
+    print("⚠️ Database not found, creating new one...")
 init_db()
 
 # -------------------------------------------
@@ -191,7 +197,7 @@ async def callback_handler(client, query: CallbackQuery):
     elif data == "restore_db":
         if is_copying: return await query.answer("কাজ চলাকালীন সম্ভব না!", show_alert=True)
         user_states[user_id] = "wait_db_file"
-        await msg.edit_text("📥 `.db` ফাইলটি পাঠান:", reply_markup=cancel_btn())
+        await msg.edit_text("📥 `.db` ফাইলটি পাঠান:\n⚠️ **সতর্কতা:** রিস্টোর করার পর বট রিস্টার্ট হবে।", reply_markup=cancel_btn())
 
     elif data == "setup_menu":
         await msg.edit_text("⚙️ **মিডিয়া সেটআপ:**", reply_markup=setup_menu())
@@ -266,12 +272,28 @@ async def callback_handler(client, query: CallbackQuery):
         user_states[user_id] = "wait_custom_start_num"
         await msg.edit_text("🔢 **কত নম্বর মেসেজ থেকে শুরু করবেন?** (সংখ্যা লিখুন):", reply_markup=cancel_btn())
 
+# 🔥 আপডেট করা ডাটাবেস রিস্টোর ফাংশন
 @bot_app.on_message(filters.document & filters.private)
 async def db_restore(client, message: Message):
     if user_states.get(message.from_user.id) == "wait_db_file" and message.document.file_name.endswith(".db"):
-        await message.download(file_name=DB_FILE)
-        del user_states[message.from_user.id]
-        await message.reply("✅ রিস্টোর সফল!", reply_markup=main_menu())
+        status = await message.reply("⏳ **ফাইল প্রসেসিং হচ্ছে...**")
+        try:
+            # আগে যদি ফাইল থাকে, ডিলিট করা হবে
+            if os.path.exists(DB_FILE):
+                os.remove(DB_FILE)
+            
+            # সঠিক পাথে ফাইল ডাউনলোড
+            await message.download(file_name=DB_FILE)
+            
+            del user_states[message.from_user.id]
+            await status.edit_text("✅ **রিস্টোর সফল!**\n🔄 নতুন ডাটা লোড করতে বট রিস্টার্ট হচ্ছে...")
+            
+            print("🔄 Restarting Bot to apply DB changes...")
+            # 🔥 বট রিস্টার্ট লজিক (যাতে ডাটাবেস নতুন করে কানেক্ট হয়)
+            os.execl(sys.executable, sys.executable, *sys.argv)
+            
+        except Exception as e:
+            await status.edit_text(f"❌ এরর: {e}")
 
 @bot_app.on_message(filters.text & ~filters.command("start"))
 async def input_handler(client, message: Message):
@@ -325,7 +347,6 @@ async def manual_copy(client, message, dest_id):
         print(f"📥 Downloading Protected File: {message.id}...")
         path = await message.download()
         
-        # 🔥 Video Thumbnail Handling to prevent GIF conversion
         if message.video and message.video.thumbs:
             print("📥 Downloading Thumbnail...")
             thumb_path = await client.download_media(message.video.thumbs[0].file_id)
@@ -336,7 +357,6 @@ async def manual_copy(client, message, dest_id):
         if message.photo: 
             await client.send_photo(dest_id, path, caption=cap)
         elif message.video: 
-            # Safe Attribute Extraction
             width = getattr(message.video, 'width', 0)
             height = getattr(message.video, 'height', 0)
             duration = getattr(message.video, 'duration', 0)
@@ -356,7 +376,6 @@ async def manual_copy(client, message, dest_id):
         elif message.document: 
             await client.send_document(dest_id, path, caption=cap)
         
-        # Cleanup
         if path and os.path.exists(path): os.remove(path)
         if thumb_path and os.path.exists(thumb_path): os.remove(thumb_path)
 
@@ -364,7 +383,6 @@ async def manual_copy(client, message, dest_id):
         return True
     except Exception as e:
         print(f"❌ Manual Copy Failed: {e}")
-        # Cleanup on fail
         if path and os.path.exists(path): os.remove(path)
         if thumb_path and os.path.exists(thumb_path): os.remove(thumb_path)
         return False
@@ -413,7 +431,6 @@ async def run_copy_process(source_input, status_msg, start_mode="continue", cust
 
         stats = {'copied': 0, 'skipped': 0, 'links': 0}
         curr = last_id + 1
-        
         BATCH = 10 
         
         while curr <= max_id:
@@ -466,7 +483,7 @@ async def run_copy_process(source_input, status_msg, start_mode="continue", cust
                                 print(f"🔗 Large Link Sent for {msg.id}")
                             except: pass
                         else:
-                            is_success = False # Flag to track success
+                            is_success = False 
                             try:
                                 print(f"📤 Copying Msg {msg.id}...")
                                 await msg.copy(dest_id)
@@ -495,7 +512,6 @@ async def run_copy_process(source_input, status_msg, start_mode="continue", cust
                                     await asyncio.sleep(3) 
                             except Exception as e: print(f"❌ Copy Error: {e}")
                             
-                            # 🔥 Save ID ONLY if copy was successful
                             if uid and is_success: 
                                 save_media_id(uid)
 
